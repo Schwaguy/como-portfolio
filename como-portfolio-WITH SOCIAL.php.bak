@@ -1,0 +1,528 @@
+<?php
+
+/*
+Plugin Name: Como Strap Portfolio
+Plugin URI: http://www.comocreative.com/
+Version: 1.0
+Author: Como Creative LLC
+Description: Plugin designed to work with the Como Strap Theme to enable and easy Portfolio Section. 
+Shortcode: [comoportfolio featured=TRUE/FALSE template=TEMPLATE NAME twitter=TWITTER TEMPLATE facebook="FACEBOOK TEMPLATE orderby=DATE/TITLE/MENU_ORDER order=ASC/DESC].  
+Custom templates can be created in your theme in a folder named "comostrap-portfolio" 
+*/
+
+session_start();
+defined('ABSPATH') or die('No Hackers!');
+
+/* ##################### Define Portfolio Item Post Type ##################### */
+if ( ! function_exists('comoportfolio_post_type') ) {
+	function comoportfolio_post_type() {
+		$labels = array(
+			'name'                  => _x('Portfolio', 'Post Type General Name', 'text_domain' ),
+			'singular_name'         => _x('Portfolio Item', 'Post Type Singular Name', 'text_domain' ),
+			'menu_name'             => __('Portfolio', 'text_domain' ),
+			'name_admin_bar'        => __('Portfolio Item', 'text_domain' ),
+			'archives'              => __('Portfolio Item Archives', 'text_domain' ),
+			'parent_item_colon'     => __('Parent Portfolio Item:', 'text_domain' ),
+			'all_items'             => __('All Portfolio', 'text_domain' ),
+			'add_new_item'          => __('Add New Portfolio Item', 'text_domain' ),
+			'add_new'               => __('Add New', 'text_domain' ),
+			'new_item'              => __('New Portfolio Item', 'text_domain' ),
+			'edit_item'             => __('Edit Portfolio Item', 'text_domain' ),
+			'update_item'           => __('Update Portfolio Item', 'text_domain' ),
+			'view_item'             => __('View Portfolio Item', 'text_domain' ),
+			'search_items'          => __('Search Portfolio', 'text_domain' ),
+			'not_found'             => __('Not found', 'text_domain' ),
+			'not_found_in_trash'    => __('Not found in Trash', 'text_domain' ),
+			'featured_image'        => __('Portfolio Item Image', 'text_domain' ),
+			'set_featured_image'    => __('Set Portfolio Item image', 'text_domain' ),
+			'remove_featured_image' => __('Remove Portfolio Item image', 'text_domain' ),
+			'use_featured_image'    => __('Use as Portfolio Item image', 'text_domain' ),
+			'insert_into_item'      => __('Insert into Portfolio', 'text_domain' ),
+			'uploaded_to_this_item' => __('Uploaded to this Portfolio Item', 'text_domain' ),
+			'items_list'            => __('Portfolio Item list', 'text_domain' ),
+			'items_list_navigation' => __('Portfolio Item list navigation', 'text_domain' ),
+			'filter_items_list'     => __('Filter Portfolio list', 'text_domain' ),
+		);
+		$args = array(
+			'label'                 => __('Portfolio Item', 'text_domain' ),
+			'description'           => __('Portfolio to be displayed on website', 'text_domain' ),
+			'labels'                => $labels,
+			'supports'              => array('title','editor','excerpt','thumbnail','page-attributes'),
+			'taxonomies'			=> array(),
+			'hierarchical'          => true,
+			'public'                => true,
+			'show_ui'               => true,
+			'show_in_menu'          => true,
+			'menu_position'         => 5,
+			'menu_icon'             => 'dashicons-admin-page',
+			'show_in_admin_bar'     => true,
+			'show_in_nav_menus'     => true,
+			'can_export'            => true,
+			'has_archive'           => true,		
+			'exclude_from_search'   => true,
+			'publicly_queryable'    => true,
+			'capability_type'       => 'page',
+		);
+		register_post_type( 'portfolio', $args );
+	}
+	add_action( 'init', 'comoportfolio_post_type', 0 );
+}
+
+// Portfolio Item Taxonomy 
+add_action( 'init', 'create_portfolio_tax', 0 );
+function create_portfolio_tax() {
+	$labels = array(
+		'name'              => _x( 'Portfolio Item Type', 'taxonomy general name' ),
+		'singular_name'     => _x( 'Portfolio Item Type', 'taxonomy singular name' ),
+		'search_items'      => __( 'Search Portfolio Item Types' ),
+		'all_items'         => __( 'All Portfolio Item Types' ),
+		'parent_item'       => __( 'Parent Portfolio Item Type' ),
+		'parent_item_colon' => __( 'Parent Portfolio Item Type:' ),
+		'edit_item'         => __( 'Edit Portfolio Item Type' ),
+		'update_item'       => __( 'Update Portfolio Item Type' ),
+		'add_new_item'      => __( 'Add New Portfolio Item Type' ),
+		'new_item_name'     => __( 'New Portfolio Item Type' ),
+		'menu_name'         => __( 'Portfolio Item Type' ),
+	);
+	$args = array(
+		'hierarchical'      => true,
+		'labels'            => $labels,
+		'show_ui'           => true,
+		'show_admin_column' => true,
+		'query_var'         => true,
+		'rewrite'           => array( 'slug' => 'portfolio-type' ),
+	);
+	register_taxonomy('portfolio-type', array('portfolio'), $args );
+}
+
+add_action( 'restrict_manage_posts', 'portfolio_restrict_manage_posts');
+function portfolio_restrict_manage_posts() {
+	global $typenow;
+	$taxonomy = 'portfolio-type';
+	if( $typenow != "page" && $typenow != "post" ){
+		$filters = array($taxonomy);
+		foreach ($filters as $tax_slug) {
+			$tax_obj = get_taxonomy($tax_slug);
+			$tax_name = $tax_obj->labels->name;
+			$terms = get_terms($tax_slug);
+			echo "<select name='$tax_slug' id='$tax_slug' class='postform'>";
+			echo "<option value=''>Show All ". $tax_name ."</option>";
+			foreach ($terms as $term) { echo '<option value='. $term->slug, $_GET[$tax_slug] == $term->slug ? ' selected="selected"' : '','>' . $term->name .' (' . $term->count .')</option>'; }
+			echo "</select>";
+		}
+	}
+}
+
+/* ##################### Portfolio Item Info Meta Box ##################### */
+
+function comoportfolio_custom_meta() {
+    add_meta_box('comoportfolio_meta', __('Additional Portfolio Item Info','comoportfolio-textdomain'),'comoportfolio_meta_callback','portfolio','normal','high');
+}
+add_action( 'add_meta_boxes', 'comoportfolio_custom_meta' );
+
+function comoportfolio_meta_callback( $post ) {
+    wp_nonce_field( basename( __FILE__ ), 'comoportfolio_nonce' );
+    $comoportfolio_stored_meta = get_post_meta( $post->ID );
+    ?>
+ 
+    <p><label for="comoportfolio-website" class="comometa-row-title"><?php _e( 'Portfolio Website', 'comoportfolio-textdomain' )?></label>
+  	<span class="comometa-row-content"><input type="text" name="comoportfolio-website" id="comoportfolio-website" value="<?php if ( isset ( $comoportfolio_stored_meta['comoportfolio-website'] ) ) echo $comoportfolio_stored_meta['comoportfolio-website'][0]; ?>" /></span></p>
+    
+    <p><label for="comoportfolio-featured" class="comometa-row-title"><?php _e( 'Featured', 'comoportfolio-textdomain' )?></label>
+    <span class="comometa-row-content"><input type="checkbox" name="comoportfolio-featured" id="comoportfolio-featured" value="yes" <?php if ( isset ( $comoportfolio_stored_meta['comoportfolio-featured'] ) ) checked( $comoportfolio_stored_meta['comoportfolio-featured'][0], 'yes' ); ?> /> <?php _e( 'Feature this client on the Portfolio page', 'comoportfolio-featured' )?></span></p>
+    
+    <p><label for="comoportfolio-icon" class="comometa-row-title"><?php _e( 'Portfolio Item Icon', 'comoportfolio-textdomain' )?></label>
+    <span class="comometa-row-content upload-field"><?php if ( isset ( $comoportfolio_stored_meta['comoportfolio-icon'] ) ) echo '<img src="'. $comoportfolio_stored_meta['comoportfolio-icon'][0] .'">'; ?><input type="text" name="comoportfolio-icon" id="comoportfolio-icon" value="<?php if ( isset ( $comoportfolio_stored_meta['comoportfolio-icon'] ) ) echo $comoportfolio_stored_meta['comoportfolio-icon'][0]; ?>" /><input type="button" id="comoportfolio-icon-button" class="button" value="<?php _e( 'Choose or Upload an Image', 'comoportfolio-textdomain' )?>" /></span></p>
+    
+    <p><label for="comoportfolio-icon-hover" class="comometa-row-title"><?php _e( 'Portfolio Icon Hover', 'comoportfolio-textdomain' )?></label>
+    <span class="comometa-row-content upload-field"><?php if ( isset ( $comoportfolio_stored_meta['comoportfolio-icon-hover'] ) ) echo '<img src="'. $comoportfolio_stored_meta['comoportfolio-icon-hover'][0] .'">'; ?><input type="text" name="comoportfolio-icon-hover" id="comoportfolio-icon-hover" value="<?php if ( isset ( $comoportfolio_stored_meta['comoportfolio-icon-hover'] ) ) echo $comoportfolio_stored_meta['comoportfolio-icon-hover'][0]; ?>" /><input type="button" id="comoportfolio-icon-hover-button" class="button" value="<?php _e( 'Choose or Upload an Image', 'comoportfolio-textdomain' )?>" /></span></p>
+    
+    <div class="social-feed">
+        <p><label for="comoportfolio-twitter" class="comometa-row-title"><?php _e( 'Twitter', 'comoportfolio-textdomain' )?></label>
+        <span class="comometa-row-content"><input type="checkbox" class="social-toggle" name="comoportfolio-twitter" id="comoportfolio-twitter" value="yes" <?php if ( isset ( $comoportfolio_stored_meta['comoportfolio-twitter'] ) ) checked( $comoportfolio_stored_meta['comoportfolio-twitter'][0], 'yes' ); ?> /> <?php _e( 'Display Twitter Feed for this Client', 'comoportfolio-twitter' )?></span></p>
+        
+        <?php
+			$dispStyle = (($comoportfolio_stored_meta['comoportfolio-twitter'][0] == 'yes') ? '' : 'inactive');
+		?>
+        <div class="feed-info <?=$dispStyle ?>" id="twitter">
+        	
+            <p><label for="comoportfolio-twitter-screenname" class="comometa-row-title"><?php _e( 'Screen Name', 'comoportfolio-textdomain' )?></label>
+            <span class="comometa-row-content"><input type="text" name="comoportfolio-twitter-screenname" id="comoportfolio-twitter-screenname" value="<?php if ( isset ( $comoportfolio_stored_meta['comoportfolio-twitter-screenname'] ) ) echo $comoportfolio_stored_meta['comoportfolio-twitter-screenname'][0]; ?>" /></span></p>
+            
+            <p><label for="comoportfolio-twitter-icon" class="comometa-row-title"><?php _e( 'Twitter Icon', 'comoportfolio-textdomain' )?></label>
+        <span class="comometa-row-content upload-field"><?php if ( isset ( $comoportfolio_stored_meta['comoportfolio-twitter-icon'] ) ) echo '<img src="'. $comoportfolio_stored_meta['comoportfolio-twitter-icon'][0] .'">'; ?><input type="text" name="comoportfolio-twitter-icon" id="comoportfolio-twitter-icon" value="<?php if ( isset ( $comoportfolio_stored_meta['comoportfolio-twitter-icon'] ) ) echo $comoportfolio_stored_meta['comoportfolio-twitter-icon'][0]; ?>" /><input type="button" id="comoportfolio-twittericon-button" class="button" value="<?php _e( 'Choose or Upload an Image', 'comoportfolio-textdomain' )?>" /></span></p>
+        
+            <p><label for="comoportfolio-twitter-consumerkey" class="comometa-row-title"><?php _e( 'Consumer Key', 'comoportfolio-textdomain' )?></label>
+            <span class="comometa-row-content"><input type="text" name="comoportfolio-twitter-consumerkey" id="comoportfolio-twitter-consumerkey" value="<?php if ( isset ( $comoportfolio_stored_meta['comoportfolio-twitter-consumerkey'] ) ) echo $comoportfolio_stored_meta['comoportfolio-twitter-consumerkey'][0]; ?>" /></span></p>
+            
+            <p><label for="comoportfolio-twitter-consumersecret" class="comometa-row-title"><?php _e( 'Consumer Secret', 'comoportfolio-textdomain' )?></label>
+            <span class="comometa-row-content"><input type="text" name="comoportfolio-twitter-consumersecret" id="comoportfolio-twitter-consumersecret" value="<?php if ( isset ( $comoportfolio_stored_meta['comoportfolio-twitter-consumersecret'] ) ) echo $comoportfolio_stored_meta['comoportfolio-twitter-consumersecret'][0]; ?>" /></span></p>
+            
+            <p><label for="comoportfolio-twitter-accesstoken" class="comometa-row-title"><?php _e( 'Access Token', 'comoportfolio-textdomain' )?></label>
+            <span class="comometa-row-content"><input type="text" name="comoportfolio-twitter-accesstoken" id="comoportfolio-twitter-accesstoken" value="<?php if ( isset ( $comoportfolio_stored_meta['comoportfolio-twitter-accesstoken'] ) ) echo $comoportfolio_stored_meta['comoportfolio-twitter-accesstoken'][0]; ?>" /></span></p>
+            
+            <p><label for="comoportfolio-twitter-accesstokensecret" class="comometa-row-title"><?php _e( 'Access Token Secret', 'comoportfolio-textdomain' )?></label>
+            <span class="comometa-row-content"><input type="text" name="comoportfolio-twitter-accesstokensecret" id="comoportfolio-twitter-accesstokensecret" value="<?php if ( isset ( $comoportfolio_stored_meta['comoportfolio-twitter-accesstokensecret'] ) ) echo $comoportfolio_stored_meta['comoportfolio-twitter-accesstokensecret'][0]; ?>" /></span></p>
+                                    
+        </div><!-- /feed-info -->
+    </div><!-- /social-feed -->
+    
+    <!-- Facebook Feed Information -->
+    <div class="social-feed">
+        <p><label for="comoportfolio-facebook" class="comometa-row-title"><?php _e( 'Facebook', 'comoportfolio-textdomain' )?></label>
+        <span class="comometa-row-content"><input type="checkbox" class="social-toggle" name="comoportfolio-facebook" id="comoportfolio-facebook" value="yes" <?php if ( isset ( $comoportfolio_stored_meta['comoportfolio-facebook'] ) ) checked( $comoportfolio_stored_meta['comoportfolio-facebook'][0], 'yes' ); ?> /> <?php _e( 'Display Facebook Feed for this Client', 'comoportfolio-facebook' )?></span></p>
+        
+        <?php
+			$dispStyle = (($comoportfolio_stored_meta['comoportfolio-facebook'][0] == 'yes') ? '' : 'inactive');
+		?>
+        <div class="feed-info <?=$dispStyle ?>" id="facebook">
+        	
+        	<p><label for="comoportfolio-facebook-displayname" class="comometa-row-title"><?php _e( 'Display Name', 'comoportfolio-textdomain' )?></label><span class="comometa-row-content"><input type="text" name="comoportfolio-facebook-displayname" id="comoportfolio-facebook-displayname" value="<?php if ( isset ( $comoportfolio_stored_meta['comoportfolio-facebook-displayname'] ) ) echo $comoportfolio_stored_meta['comoportfolio-facebook-displayname'][0]; ?>" /></span></p>
+            
+            <p><label for="comoportfolio-facebook-pagelink" class="comometa-row-title"><?php _e( 'Page Link', 'comoportfolio-textdomain' )?></label><span class="comometa-row-content"><input type="text" name="comoportfolio-facebook-pagelink" id="comoportfolio-facebook-pagelink" value="<?php if ( isset ( $comoportfolio_stored_meta['comoportfolio-facebook-pagelink'] ) ) echo $comoportfolio_stored_meta['comoportfolio-facebook-pagelink'][0]; ?>" /></span></p>
+            
+            <p><label for="comoportfolio-facebook-icon" class="comometa-row-title"><?php _e( 'Facebook Icon', 'comoportfolio-textdomain' )?></label>
+        <span class="comometa-row-content upload-field"><?php if ( isset ( $comoportfolio_stored_meta['comoportfolio-facebook-icon'] ) ) echo '<img src="'. $comoportfolio_stored_meta['comoportfolio-facebook-icon'][0] .'">'; ?><input type="text" name="comoportfolio-facebook-icon" id="comoportfolio-facebook-icon" value="<?php if ( isset ( $comoportfolio_stored_meta['comoportfolio-facebook-icon'] ) ) echo $comoportfolio_stored_meta['comoportfolio-facebook-icon'][0]; ?>" /><input type="button" id="comoportfolio-facebookicon-button" class="button" value="<?php _e( 'Choose or Upload an Image', 'comoportfolio-textdomain' )?>" /></span></p>
+        
+            <p><label for="comoportfolio-facebook-appId" class="comometa-row-title"><?php _e( 'App ID', 'comoportfolio-textdomain' )?></label>
+            <span class="comometa-row-content"><input type="text" name="comoportfolio-facebook-appId" id="comoportfolio-facebook-appId" value="<?php if ( isset ( $comoportfolio_stored_meta['comoportfolio-facebook-appId'] ) ) echo $comoportfolio_stored_meta['comoportfolio-facebook-appId'][0]; ?>" /></span></p>
+            
+            <p><label for="comoportfolio-facebook-secret" class="comometa-row-title"><?php _e( 'App Secret', 'comoportfolio-textdomain' )?></label>
+            <span class="comometa-row-content"><input type="text" name="comoportfolio-facebook-secret" id="comoportfolio-facebook-secret" value="<?php if ( isset ( $comoportfolio_stored_meta['comoportfolio-facebook-secret'] ) ) echo $comoportfolio_stored_meta['comoportfolio-facebook-secret'][0]; ?>" /></span></p>
+            
+            <p><label for="comoportfolio-facebook-pageid" class="comometa-row-title"><?php _e( 'Page ID', 'comoportfolio-textdomain' )?></label>
+            <span class="comometa-row-content"><input type="text" name="comoportfolio-facebook-pageid" id="comoportfolio-facebook-pageid" value="<?php if ( isset ( $comoportfolio_stored_meta['comoportfolio-facebook-pageid'] ) ) echo $comoportfolio_stored_meta['comoportfolio-facebook-pageid'][0]; ?>" /></span></p>
+                                    
+        </div><!-- /feed-info -->
+    </div><!-- /social-feed -->
+    
+    <?php 
+}
+
+function comoportfolio_image_enqueue() {
+    global $typenow;
+    if( $typenow == 'portfolio' ) {
+        wp_enqueue_media();
+ 
+        // Registers script for logo upload
+        wp_register_script( 'meta-comoportfolio-icon', plugin_dir_url( __FILE__ ) . 'js/meta-box-portfolio-icon.js', array( 'jquery' ) );
+        wp_localize_script( 'meta-comoportfolio-icon', 'meta_image',
+            array(
+                'title' => __( 'Choose or Upload an Image', 'comoportfolio-textdomain' ),
+                'button' => __( 'Use this image', 'comoportfolio-textdomain' ),
+            )
+        );
+        wp_enqueue_script( 'meta-comoportfolio-icon' );
+		
+		// Registers script for logo hover upload
+		wp_register_script( 'meta-comoportfolio-icon-hover', plugin_dir_url( __FILE__ ) . 'js/meta-box-portfolio-twitter-icon.js', array( 'jquery' ) );
+        wp_localize_script( 'meta-comoportfolio-icon-hover', 'meta_image',
+            array(
+                'title' => __( 'Choose or Upload an Image', 'comoportfolio-textdomain' ),
+                'button' => __( 'Use this image', 'comoportfolio-textdomain' ),
+            )
+        );
+        wp_enqueue_script( 'meta-comoportfolio-twitter-icon' );
+		
+		// Registers script for Twitter Icon upload
+		wp_register_script( 'meta-comoportfolio-twitter-icon', plugin_dir_url( __FILE__ ) . 'js/meta-box-portfolio-twitter-icon.js', array( 'jquery' ) );
+        wp_localize_script( 'meta-comoportfolio-twitter-icon', 'meta_image',
+            array(
+                'title' => __( 'Choose or Upload an Image', 'comoportfolio-textdomain' ),
+                'button' => __( 'Use this image', 'comoportfolio-textdomain' ),
+            )
+        );
+        wp_enqueue_script( 'meta-comoportfolio-twitter-icon' );
+		
+		// Registers script for Facebook Icon upload
+		wp_register_script( 'meta-comoportfolio-facebook-icon', plugin_dir_url( __FILE__ ) . 'js/meta-box-portfolio-facebook-icon.js', array( 'jquery' ) );
+        wp_localize_script( 'meta-comoportfolio-facebook-icon', 'meta_image',
+            array(
+                'title' => __( 'Choose or Upload an Image', 'comoportfolio-textdomain' ),
+                'button' => __( 'Use this image', 'comoportfolio-textdomain' ),
+            )
+        );
+        wp_enqueue_script( 'meta-comoportfolio-facebook-icon' );
+		
+		// Register Social Toggle Scripts 
+		wp_register_script( 'meta-comoportfolio-social-toggle', plugin_dir_url( __FILE__ ) . 'js/meta-box-portfolio-social-toggle.js', array( 'jquery' ) );
+		wp_enqueue_script('meta-comoportfolio-social-toggle');
+    }
+}
+add_action( 'admin_enqueue_scripts', 'comoportfolio_image_enqueue' );
+
+
+
+// Saves the Portfolio Item Info Section meta input
+function comoportfolio_meta_save( $post_id ) {
+    // Checks save status
+    $is_autosave = wp_is_post_autosave( $post_id );
+    $is_revision = wp_is_post_revision( $post_id );
+    $is_valid_nonce = ( isset( $_POST[ 'comoportfolio_nonce' ] ) && wp_verify_nonce( $_POST[ 'comoportfolio_nonce' ], basename( __FILE__ ) ) ) ? 'true' : 'false';
+ 
+    // Exits script depending on save status
+    if ( $is_autosave || $is_revision || !$is_valid_nonce ) {
+        return;
+    }
+	
+	// Specify Meta Variables to be Updated
+	$metaVars = array('comoportfolio-website','comoportfolio-featured','comoportfolio-icon','comoportfolio-icon-hover','comoportfolio-twitter','comoportfolio-twitter-consumerkey','comoportfolio-twitter-consumersecret','comoportfolio-twitter-accesstoken','comoportfolio-twitter-accesstokensecret','comoportfolio-twitter-screenname','comoportfolio-twitter-icon','comoportfolio-facebook','comoportfolio-facebook-pagelink','comoportfolio-facebook-displayname','comoportfolio-facebook-icon','comoportfolio-facebook-appId','comoportfolio-facebook-secret','comoportfolio-facebook-pageid');
+	$checkboxVars = array('comoportfolio-featured','comoportfolio-twitter','comoportfolio-facebook');
+	
+	// Update Meta Variables
+	foreach ($metaVars as $var) {
+		if (in_array($var,$checkboxVars)) {
+			if (isset($_POST[$var])) {
+				update_post_meta($post_id, $var, 'yes');
+			} else {
+				update_post_meta($post_id, $var, '');
+			}
+		} else {
+			if(isset($_POST[$var])) {
+				update_post_meta($post_id, $var, $_POST[$var]);
+			} else {
+				update_post_meta($post_id, $var, '');
+			}
+		}
+	}
+}
+add_action( 'save_post', 'comoportfolio_meta_save' );
+
+// Adds the meta box stylesheet when appropriate 
+function portfolios_admin_styles(){
+    global $typenow;
+    if($typenow == 'portfolio') {
+        wp_enqueue_style('portfolio_meta_box_styles', plugin_dir_url( __FILE__ ) .'css/admin.min.css');
+    }
+}
+add_action('admin_print_styles', 'portfolios_admin_styles');
+
+// Custom Image Sizes
+add_action( 'after_setup_theme', 'comoportfolio_img_sizes' );
+function comoportfolio_img_sizes() {
+	add_image_size( 'portfolio-logo', 350); // (not-cropped)
+}
+
+/* ##################### Shortcode to Show Portfolio ##################### */
+
+// Get Meta item ID by Meta Key
+if (!function_exists('get_mid_by_key')) {
+	function get_mid_by_key( $post_id, $meta_key ) {
+		global $wpdb;
+		$mid = $wpdb->get_var( $wpdb->prepare("SELECT meta_id FROM $wpdb->postmeta WHERE post_id = %d AND meta_key = %s", $post_id, $meta_key) );
+		if( $mid != '' )
+			return (int)$mid;
+		return false;
+	}
+}
+
+// Get an attachment ID given a URL 
+if (!function_exists('get_attachment_id')) {
+	function get_attachment_id( $url ) {
+		$attachment_id = 0;
+		$dir = wp_upload_dir();
+		if ( false !== strpos( $url, $dir['baseurl'] . '/' ) ) { // Is URL in uploads directory?
+			$file = basename( $url );
+			$query_args = array(
+				'post_type'   => 'attachment',
+				'post_status' => 'inherit',
+				'fields'      => 'ids',
+				'meta_query'  => array(
+					array(
+						'value'   => $file,
+						'compare' => 'LIKE',
+						'key'     => '_wp_attachment_metadata',
+					),
+				)
+			);
+			$query = new WP_Query( $query_args );
+			if ( $query->have_posts() ) {
+				foreach ( $query->posts as $post_id ) {
+					$meta = wp_get_attachment_metadata( $post_id );
+					$original_file       = basename( $meta['file'] );
+					$cropped_image_files = wp_list_pluck( $meta['sizes'], 'file' );
+					if ( $original_file === $file || in_array( $file, $cropped_image_files ) ) {
+						$attachment_id = $post_id;
+						break;
+					}
+				}
+			}
+		}
+		return $attachment_id;
+	}
+}
+
+// Usage: [comoportfolio featured=TRUE/FALSE template=TEMPLATE NAME twitter=TWITTER TEMPLATE facebook="FACEBOOK TEMPLATE orderby=DATE/TITLE/MENU_ORDER order=ASC/DESC]
+class ComoFeaturedPortfolio_Shortcode {
+	static $add_script;
+	static $add_style;
+	static function init() {
+		add_shortcode('comoportfolio', array(__CLASS__, 'handle_shortcode'));
+		//add_action('init', array(__CLASS__, 'register_script'));
+		//add_action('wp_footer', array(__CLASS__, 'print_script'));
+	}
+	
+	static function handle_shortcode($atts) {
+		self::$add_style = true;
+		self::$add_script = true;
+		
+		$portfolio_featured = (isset($atts['featured']) ? $atts['featured'] : 'all');
+		$portfolio_template = (isset($atts['template']) ? $atts['template'] : 'default');
+		$twittemp = (isset($atts['twitter']) ? $atts['twitter'] : 'twitter-default');
+		$twittemp = (is_child_theme() ? get_stylesheet_directory() : get_template_directory() ) . '/comostrap-portfolio/'. $twittemp .'.php';
+		$fbtemp = (isset($atts['facebook']) ? $atts['facebook'] : 'facebook-default');
+		$fbtemp = (is_child_theme() ? get_stylesheet_directory() : get_template_directory() ) . '/comostrap-portfolio/'. $fbtemp .'.php';
+		$orderby = (isset($atts['orderby']) ? $atts['orderby'] : 'menu_order');
+		$order = (isset($atts['order']) ? $atts['order'] : 'ASC');
+		
+		if ($portfolio_featured == 'featured') {
+			$args = array('post_type'=>'portfolio','post_status'=>'publish','meta_query'=>array(array('key'=>'comoportfolio-featured','value'=>'yes')),'posts_per_page'=>-1,'orderby'=>$orderby,'order'=>$order);
+		} else {
+			$args = array('post_type'=>'portfolio','post_status'=>'publish','posts_per_page'=>-1,'orderby'=>$orderby,'order'=>$order);
+		}
+		$query = new WP_Query( $args );
+		
+		if ($query->have_posts()) { 
+			unset($portfolio_array);
+			while ($query->have_posts()) {
+				$query->the_post(); 
+				unset($port);
+				$port['id'] = get_the_ID();
+				$port['image'] = get_the_post_thumbnail($port['id'],'full');
+				$port['title'] = get_the_title();
+				$port['website'] = get_post_meta($port['id'],'comoportfolio-website',true);
+				
+				// Logo Normal
+				$port['icon-link'] = get_post_meta($port['id'],'comoportfolio-icon',true);
+				$iconMetaID = get_attachment_id($port['icon-link']);
+				$iconMeta = wp_get_attachment_metadata($iconMetaID);
+				$port['icon'] = $iconMeta;
+				$port['icon-alt'] = get_post_meta($iconMetaID,'_wp_attachment_image_alt',true);
+				
+				// Logo Hover
+				$port['icon-hover-link'] = get_post_meta($port['id'],'comoportfolio-icon-hover',true);
+				$iconHoverMetaID = get_attachment_id($port['icon-hover-link']);
+				$iconHoverMeta = wp_get_attachment_metadata($iconHoverMetaID);
+				$port['icon-hover'] = $iconHoverMeta;
+				$port['icon-hover-alt'] = get_post_meta($iconHoverMetaID,'_wp_attachment_image_alt',true);
+				
+				$port['link'] = get_permalink();
+				$port['excerpt'] = wpautop(get_the_excerpt());
+				$port['content'] = get_the_content();
+				
+				// If Twitter Feed Should Be displayed
+				$port['twitter'] = get_post_meta($port['id'],'comoportfolio-twitter',true);
+				$port['twitter'] = (($port['twitter']) ? $port['twitter'] : false);
+				if ($port['twitter']) {
+					require_once(plugin_dir_path( __FILE__ ) .'assets/tweet-php-master/TweetPHP.php');
+					
+					$screenName = get_post_meta($port['id'],'comoportfolio-twitter-screenname',true);
+					
+					// Twitter Feed Icon
+					$port['twitter-icon'] = get_post_meta($port['id'],'comoportfolio-twitter-icon',true);
+					$port['twitter-icon-alt'] = get_post_meta($iconMetaID,'_wp_attachment_image_alt',true);
+					
+					// Get Twitter Feed Template
+					if ($twittemp) {
+						//$twittemp = (is_child_theme() ? get_stylesheet_directory() : get_template_directory() ) . '/comostrap-portfolio/'. $twittemp .'.php';
+						include ((file_exists($twittemp)) ? $twittemp : plugin_dir_path( __FILE__ ) .'templates/twitter-default.php');
+					} else {
+						include(plugin_dir_path( __FILE__ ) .'templates/twitter-default.php');
+					}
+					
+					if ($twitter_template['enable_cache']) {
+						if (!file_exists(get_stylesheet_directory() .'/comostrap-portfolio')) 
+							mkdir(get_stylesheet_directory() .'/comostrap-portfolio', 0755, true);
+						if (!file_exists(get_stylesheet_directory() .'/comostrap-portfolio/cache')) 
+							mkdir(get_stylesheet_directory() .'/comostrap-portfolio/cache', 0755, true);
+						if (!file_exists(get_stylesheet_directory() .'/comostrap-portfolio/cache/twitter'))
+							mkdir(get_stylesheet_directory() .'/comostrap-portfolio/cache/twitter', 0755, true);
+					}
+					
+					$port['twitter'] = new TweetPHP(array(
+					  	'consumer_key'          => get_post_meta($port['id'],'comoportfolio-twitter-consumerkey',true),
+					  	'consumer_secret'       => get_post_meta($port['id'],'comoportfolio-twitter-consumersecret',true),
+					  	'access_token'          => get_post_meta($port['id'],'comoportfolio-twitter-accesstoken',true),
+					  	'access_token_secret'   => get_post_meta($port['id'],'comoportfolio-twitter-accesstokensecret',true),
+					  	'twitter_screen_name'   => $screenName,
+						'enable_cache'          => $twitter_template['enable_cache'] ,
+						'cache_dir'             => $twitter_template['cache_dir'],
+						'cachetime'             => $twitter_template['cachetime'],
+						'tweets_to_retrieve'    => $twitter_template['tweets_to_retrieve'], 
+						'tweets_to_display'     => $twitter_template['tweets_to_display'], 
+						'ignore_replies'        => $twitter_template['ignore_replies'], 
+						'ignore_retweets'       => $twitter_template['ignore_retweets'], 
+						'twitter_style_dates'   => $twitter_template['twitter_style_dates'], 
+						'twitter_date_text'     => $twitter_template['twitter_date_text'],
+						'date_format'           => $twitter_template['date_format'], 
+						'date_lang'             => $twitter_template['date_lang'],
+						'twitter_template'      => $twitter_template['twitter_template'],
+						'tweet_template'        => $twitter_template['tweet_template'],
+						'error_template'        => $twitter_template['error_template'],
+						'debug'                 => $twitter_template['debug'] 
+					));
+				} 
+				
+				// If Facebook Feed should be displayed
+				$port['facebook'] = get_post_meta($port['id'],'comoportfolio-facebook',true);
+				$fbappId = get_post_meta($port['id'],'comoportfolio-facebook-appId',true);
+				$fbappSecret = get_post_meta($port['id'],'comoportfolio-facebook-secret',true);
+				$pageid = get_post_meta($port['id'],'comoportfolio-facebook-pageid',true);
+				
+				if ($port['facebook'] && $fbappId && $fbappSecret && $pageid) {
+					// include the facebook sdk
+					require_once(plugin_dir_path( __FILE__ ) .'assets/facebook-php-sdk-master/facebook.php');
+					
+					$port['fbDisplayName'] = get_post_meta($port['id'],'comoportfolio-facebook-displayname',true);
+					$port['fbPageLink'] = get_post_meta($port['id'],'comoportfolio-facebook-pagelink',true);
+					
+					// Facebook Feed Icon
+					$port['facebook-icon'] = get_post_meta($port['id'],'comoportfolio-facebook-icon',true);
+					$port['facebook-icon-alt'] = get_post_meta($iconMetaID,'_wp_attachment_image_alt',true);
+					
+					// Connect to Facebook app
+					
+					$config = array();
+					$config['appId'] = $fbappId;
+					$config['secret'] = $fbappSecret;
+					$config['fileUpload'] = false; // optional
+					$facebook = new Facebook($config);
+					$pagefeed = $facebook->api("/" . $pageid . "/feed/?fields=type,message,id,story,link");
+					$port['facebook'] = $pagefeed; 
+					
+					// Get facebook Feed Template
+					if ($fbtemp) {
+						include((file_exists($fbtemp)) ? $fbtemp : plugin_dir_path( __FILE__ ) .'templates/facebook-default.php');
+					} else {
+						include(plugin_dir_path( __FILE__ ) .'templates/facebook-default.php');
+					}
+					$port['facebook'] = $feedDisplay;
+				}
+				$portfolio_array[] = $port;
+			}
+			
+			if ($portfolio_template) {
+				$temp = ''; 
+				$temp = (is_child_theme() ? get_stylesheet_directory() : get_template_directory() ) . '/comostrap-portfolio/'. $portfolio_template .'.php';
+				include((file_exists($temp)) ? $temp : plugin_dir_path( __FILE__ ) .'templates/default.php');
+			} else {
+				include(plugin_dir_path( __FILE__ ) .'templates/default.php');
+			}
+			$comoportfolio = $portDisplay;
+		}
+		if ($comoportfolio) { return($comoportfolio); }
+	}
+	
+	// Register & Print Scripts
+	/*static function register_script() {
+		wp_register_script('comoportfolios_script', plugins_url('js/comoportfolios.js', __FILE__), array('jquery'), '1.0', true);
+	}
+	static function print_script() {
+		if ( ! self::$add_script )
+			return;
+		wp_print_scripts('comoportfolios_script');
+	}*/
+}
+ComoFeaturedPortfolio_Shortcode::init();
+
+?>
