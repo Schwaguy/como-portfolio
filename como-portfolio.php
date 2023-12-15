@@ -715,6 +715,37 @@ function register_portfolio_meta_fields(){
 	}
 }
 
+// Allow REST API to sort by Featured
+add_filter( 'rest_portfolio_query', 'filter_portfolio_by_featured', 999, 2 );
+function filter_portfolio_by_featured( $args, $request ) {
+	if ( ! isset( $request['comoportfolio-featured'] )  ) {
+		return $args;
+	}
+	
+	$source_value = sanitize_text_field( $request['comoportfolio-featured'] );
+	$source_meta_query = array(
+		'key' => 'comoportfolio-featured',
+		'value' => $source_value
+	);
+	
+	if ( isset( $args['meta_query'] ) ) {
+		$args['meta_query']['relation'] = 'AND';
+		$args['meta_query'][] = $source_meta_query;
+	} else {
+		$args['meta_query'] = array();
+		$args['meta_query'][] = $source_meta_query;
+	}
+	
+	return $args;
+}
+
+// Add Order By to REST API
+add_filter( 'rest_post_collection_params', 'comoportfolio_add_rest_orderby_params', 10, 1 );
+function comoportfolio_add_rest_orderby_params( $params ) {
+    $params['orderby']['enum'][] = 'menu_order';
+    return $params;
+}
+
 // Saves the Portfolio Item Info Section meta input
 function comoportfolio_meta_save( $post_id ) {
 	
